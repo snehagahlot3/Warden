@@ -1,0 +1,175 @@
+# WARDEN-T Configuration Files
+
+## configs/cic_ids2017.yaml
+
+# Primary dataset configuration for CIC-IDS2017
+dataset:
+  name: "CIC-IDS2017"
+  source_url: "http://cicresearch.ca/CICDataset/CIC-IDS-2017/"
+  data_dir: "data/raw/cic-ids2017"
+  csv_dir: "data/raw/cic-ids2017/csv"
+  pcap_dir: "data/raw/cic-ids2017/pcap"
+
+  # CSV file patterns (from MachineLearningCSV.zip)
+  csv_files:
+    - "Monday-WorkingHours.csv"
+    - "Tuesday-WorkingHours.csv"
+    - "Wednesday-workingHours.csv"
+    - "Thursday-WorkingHours.csv"
+    - "Friday-WorkingHours.csv"
+
+  # Column mappings
+  columns:
+    timestamp: "Timestamp"
+    src_ip: "Source IP"
+    dst_ip: "Destination IP"
+    src_port: "Source Port"
+    dst_port: "Destination Port"
+    protocol: "Protocol"
+    label: "Label"
+    attack_category: "Label"  # CIC-IDS2017 uses Label for attack category names
+
+  # Temporal configuration (ACTUAL pipeline parameters)
+  temporal:
+    window_size: 500     # flows per network state S_t
+    prediction_horizon: 1 # Predict S(t+1)
+    forecast_steps: 5     # Recursive roll forward 5 steps
+    sequence_length: 10   # S(t-9), ..., S(t)
+    num_features: 81      # Features per state (after aggregation)
+    num_flows_per_state: 500
+    total_network_states: 4199
+    total_sequences: 4189
+
+  # Feature columns (80+ CICFlowMeter features)
+  feature_columns:
+    exclude: ["Timestamp", "Source IP", "Destination IP", "Source Port",
+              "Destination Port", "Protocol", "Label"]
+
+  # Attack categories in CIC-IDS2017
+  attack_categories:
+    - "BENIGN"
+    - "DoS Hulk"
+    - "PortScan"
+    - "DDoS"
+    - "DoS GoldenEye"
+    - "FTP-Patator"
+    - "SSH-Patator"
+    - "DoS slowloris"
+    - "DoS Slowhttptest"
+    - "Bot"
+    - "Web Attack - Brute Force"
+    - "Web Attack - XSS"
+    - "Infiltration"
+    - "Web Attack - Sql Injection"
+    - "Heartbleed"
+
+  # Known issues
+  known_issues:
+    - "Some rows contain inf/NaN values - require cleaning"
+    - "Original CICFlowMeter had TCP flow termination bugs"
+    - "Use corrected dataset version from community sources"
+
+  # Download instructions
+  download:
+    steps:
+      1: "Visit https://www.unb.ca/cic/datasets/ids-2017.html"
+      2: "Click 'Download this dataset' and create an account"
+      3: "Download the full ZIP from cicresearch.ca"
+      4: "Extract MachineLearningCSV.zip to data/raw/cic-ids2017/csv/"
+      5: "Extract PCAP files to data/raw/cic-ids2017/pcap/"
+
+---
+
+## configs/unsw_nb15.yaml
+
+# Secondary dataset configuration for UNSW-NB15
+dataset:
+  name: "UNSW-NB15"
+  source_url: "https://research.unsw.edu.au/projects/unsw-nb15-dataset"
+  data_dir: "data/raw/unsw-nb15"
+  csv_dir: "data/raw/unsw-nb15/csv"
+  pcap_dir: "data/raw/unsw-nb15/pcap"
+
+  csv_files:
+    - "UNSW-NB15_1.csv"
+    - "UNSW-NB15_2.csv"
+    - "UNSW-NB15_3.csv"
+    - "UNSW-NB15_4.csv"
+
+  columns:
+    timestamp: "Stime"
+    src_ip: "srcip"
+    dst_ip: "dstip"
+    src_port: "sport"
+    dst_port: "dsport"
+    protocol: "proto"
+    label: "Label"
+    attack_category: "attack_cat"
+    state: "state"  # TCP state, NOT individual flags
+
+  temporal:
+    window_size: 10
+    prediction_horizon: 1
+    forecast_steps: 5
+
+  feature_columns:
+    exclude: ["srcip", "dstip", "sport", "dsport", "Stime", "Ltime",
+              "attack_cat", "Label", "id"]
+
+  attack_categories:
+    - "Normal"
+    - "Fuzzers"
+    - "Analysis"
+    - "Backdoors"
+    - "DoS"
+    - "Exploits"
+    - "Generic"
+    - "Reconnaissance"
+    - "Shellcode"
+    - "Worms"
+
+  known_issues:
+    - "No individual TCP flag counts (has 'state' field instead)"
+    - "Some nominal features require encoding"
+    - "Simulation period is Jan 22 - Feb 17, 2015"
+
+---
+
+## configs/model_config.yaml
+
+# WARDEN-T model, training and forecasting configuration.
+# These values are consumed by src/models/*.py and src/forecasting/*.py.
+
+model:
+  input_dim: 87          # features per network state S_t (81 - 1 leakage + 7 packet-level)
+  output_dim: 87         # predicted S(t+1)
+  d_model: 64
+  nhead: 4
+  num_layers: 2
+  dim_feedforward: 128
+  dropout: 0.1
+  sequence_length: 10    # S(t-9) ... S(t)
+  max_len: 64            # rollout safety limit on sequence length
+  pooling: "last"        # "last" = encode S(t); "mean" = average over window
+
+training:
+  batch_size: 32
+  epochs: 30
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  patience: 7            # early stopping on validation total loss
+  grad_clip: 1.0
+  lambda_state: 1.0
+  lambda_risk: 1.0
+  lambda_category: 1.0
+  huber_beta: 1.0        # SmoothL1 transition point
+  class_weight_mode: "inverse_frequency"
+  feature_clip: 10.0     # robust-scaling clip bound in normalised units
+  risk_pos_weight: true  # selected on validation: val loss 1.68/AUC 0.508 vs 2.13/0.396 without
+
+forecasting:
+  horizon: 5             # recursive rollout steps K
+
+paths:
+  processed_dir: "data/processed"
+  models_dir: "models"
